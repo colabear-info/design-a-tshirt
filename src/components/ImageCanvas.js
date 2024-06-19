@@ -1,59 +1,105 @@
-import React, { useState } from 'react';
-import { DndProvider, useDrag, useDrop } from 'react-dnd';
-import { HTML5Backend } from 'react-dnd-html5-backend';
-
-const ItemTypes = {
-  IMAGE: 'image',
-};
-
-const DraggableImage = ({ src, x, y, setPosition }) => {
-  const [, drag] = useDrag({
-    type: ItemTypes.IMAGE,
-    item: { x, y },
-    end: (item, monitor) => {
-      const delta = monitor.getDifferenceFromInitialOffset();
-      const newX = Math.round(item.x + delta.x);
-      const newY = Math.round(item.y + delta.y);
-      setPosition({ x: newX, y: newY });
-    },
-  });
-
-  return (
-    <img
-      ref={drag}
-      src={src}
-      alt="Uploaded"
-      style={{ position: 'absolute', left: x, top: y, cursor: 'move', width: 'auto', height: 'auto', maxWidth: '100%', maxHeight: '100%' }}
-    />
-  );
-};
+import React, { useState, useEffect, useRef } from 'react';
+import { fabric } from 'fabric';
 
 const ImageCanvas = () => {
-  const [image, setImage] = useState(null);
-  const [position, setPosition] = useState({ x: 50, y: 50 });
+  const [canvas, setCanvas] = useState(null);
+  const [history, setHistory] = useState([]);
+  const [redoStack, setRedoStack] = useState([]);
+  const canvasRef = useRef(null);
+
+  useEffect(() => {
+    const fabricCanvas = new fabric.Canvas(canvasRef.current, {
+      width: 800,
+      height: 600,
+      backgroundColor: 'white',
+    });
+
+    fabricCanvas.on('object:added', updateHistory);
+    fabricCanvas.on('object:modified', updateHistory);
+    fabricCanvas.on('object:removed', updateHistory);
+
+    setCanvas(fabricCanvas);
+
+    return () => {
+      fabricCanvas.off('object:added', updateHistory);
+      fabricCanvas.off('object:modified', updateHistory);
+      fabricCanvas.off('object:removed', updateHistory);
+      fabricCanvas.dispose();
+    };
+  }, []);
+
+  const updateHistory = () => {
+    if (canvas) {
+      const json = canvas.toJSON();
+      setHistory((prevHistory) => [...prevHistory, json]);
+      setRedoStack([]);
+    }
+  };
 
   const handleImageUpload = (e) => {
     const file = e.target.files[0];
     if (file) {
       const reader = new FileReader();
       reader.onload = (event) => {
-        setImage(event.target.result);
+        fabric.Image.fromURL(event.target.result, (img) => {
+          img.set({
+            left: 50,
+            top: 50,
+            angle: 0,
+            padding: 10,
+            cornersize: 10,
+            hasRotatingPoint: true,
+          });
+          canvas.add(img).renderAll();
+          canvas.setActiveObject(img);
+        });
       };
       reader.readAsDataURL(file);
     }
   };
 
+  const handleUndo = () => {
+    if (history.length > 0) {
+      const lastState = history[history.length - 1];
+      setHistory((prevHistory) => prevHistory.slice(0, -1));
+      setRedoStack((prevRedoStack) => [...prevRedoStack, canvas.toJSON()]);
+      canvas.loadFromJSON(lastState, canvas.renderAll.bind(canvas));
+    }
+  };
+
+  const handleRedo = () => {
+    if (redoStack.length > 0) {
+      const nextState = redoStack[redoStack.length - 1];
+      setRedoStack((prevRedoStack) => prevRedoStack.slice(0, -1));
+      setHistory((prevHistory) => [...prevHistory, canvas.toJSON()]);
+      canvas.loadFromJSON(nextState, canvas.renderAll.bind(canvas));
+    }
+  };
+
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.metaKey && e.key === 'z') {
+        handleUndo();
+      }
+      if (e.metaKey && e.shiftKey && e.key === 'z') {
+        handleRedo();
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [history, redoStack, canvas]);
+
   return (
-    <div style={{ width: '100%', height: '100%' }}>
+    <div>
       <input type="file" accept="image/*" onChange={handleImageUpload} />
-      <DndProvider backend={HTML5Backend}>
-        <div style={{ position: 'relative', width: '800px', height: '600px', border: '1px solid black', marginTop: '20px' }}>
-          {image && <DraggableImage src={image} x={position.x} y={position.y} setPosition={setPosition} />}
-        </div>
-      </DndProvider>
+      <button onClick={handleUndo}>Undo</button>
+      <button onClick={handleRedo}>Redo</button>
+      <canvas ref={canvasRef} />
     </div>
   );
 };
 
 export default ImageCanvas;
-

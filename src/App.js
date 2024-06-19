@@ -6,7 +6,7 @@ const App = () => {
   return (
     <div className="App">
       <header className="App-header">
-        <h1>Image Upload and Drag</h1>
+        <h1>Image Upload and Drag with Fabric.js</h1>
         <ImageCanvas />
       </header>
     </div>
@@ -14,3 +14,4 @@ const App = () => {
 };
 
 export default App;
+
