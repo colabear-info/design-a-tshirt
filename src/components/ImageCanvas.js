@@ -7,7 +7,8 @@ const ImageCanvas = () => {
   const [canvas, setCanvas] = useState(null);
   const [history, setHistory] = useState([]);
   const [redoStack, setRedoStack] = useState([]);
-  const [isUndoRedoAction, setIsUndoRedoAction] = useState(false); // 新的状态变量
+  const [isUndoRedoAction, setIsUndoRedoAction] = useState(false);
+  const [isShiftPressed, setIsShiftPressed] = useState(false);
   const canvasRef = useRef(null);
 
   useEffect(() => {
@@ -25,30 +26,28 @@ const ImageCanvas = () => {
   }, []);
 
   const saveHistory = useCallback(() => {
-    if (canvas && !isUndoRedoAction) { // 仅在不是 undo/redo 操作时保存历史记录
+    if (canvas && !isUndoRedoAction) {
       const json = canvas.toJSON();
       console.log("Saving history:", json);
+
       setHistory((prevHistory) => {
-        const newHistory = [...prevHistory, json];
-        if (newHistory.length > MAX_HISTORY_LENGTH) {
-          newHistory.shift(); // 删除最早的一条记录
-        }
+        const newHistory = prevHistory.length >= MAX_HISTORY_LENGTH 
+          ? prevHistory.slice(1).concat(json)
+          : prevHistory.concat(json);
         return newHistory;
       });
-      setRedoStack([]); // 清空 redo 堆栈
+
+      setRedoStack([]); 
     }
   }, [canvas, isUndoRedoAction]);
 
   useEffect(() => {
     if (canvas) {
-      canvas.on('object:added', saveHistory);
-      canvas.on('object:modified', saveHistory);
-      canvas.on('object:removed', saveHistory);
-
+      const events = ['object:added', 'object:modified', 'object:removed'];
+      events.forEach(event => canvas.on(event, saveHistory));
+      
       return () => {
-        canvas.off('object:added', saveHistory);
-        canvas.off('object:modified', saveHistory);
-        canvas.off('object:removed', saveHistory);
+        events.forEach(event => canvas.off(event, saveHistory));
       };
     }
   }, [canvas, saveHistory]);
@@ -59,18 +58,27 @@ const ImageCanvas = () => {
       const reader = new FileReader();
       reader.onload = (event) => {
         fabric.Image.fromURL(event.target.result, (img) => {
+          const canvasWidth = canvas.getWidth();
+          const canvasHeight = canvas.getHeight();
+
+          // 缩放图像到画布宽度的1/5
+          const scaleFactor = (canvasWidth / 5) / img.width;
+          img.scale(scaleFactor);
+
+          // 设置图像位置为画布中心
           img.set({
-            left: 50,
-            top: 50,
+            left: canvasWidth / 2 - (img.getScaledWidth() / 2),
+            top: canvasHeight / 2 - (img.getScaledHeight() / 2),
             angle: 0,
             padding: 10,
             cornersize: 10,
             hasRotatingPoint: true,
           });
+
           canvas.add(img);
           canvas.renderAll();
           canvas.setActiveObject(img);
-          saveHistory(); // 在上传图像后立即保存历史记录
+          saveHistory();
         });
       };
       reader.readAsDataURL(file);
@@ -83,20 +91,15 @@ const ImageCanvas = () => {
       const currentState = history[history.length - 1];
       const prevState = history[history.length - 2];
       console.log("Undoing to state:", prevState);
+
       setRedoStack((prevRedoStack) => [...prevRedoStack, currentState]);
       setHistory((prevHistory) => prevHistory.slice(0, -1));
+
       canvas.loadFromJSON(prevState, () => {
         console.log("Canvas state after undo:", canvas.toJSON());
         canvas.renderAll();
         setIsUndoRedoAction(false);
       });
-    } else if (history.length === 1) {
-      setIsUndoRedoAction(true);
-      const currentState = history[0];
-      setRedoStack((prevRedoStack) => [...prevRedoStack, currentState]);
-      setHistory([]);
-      canvas.clear();
-      setIsUndoRedoAction(false);
     }
   }, [history, canvas]);
 
@@ -105,8 +108,10 @@ const ImageCanvas = () => {
       setIsUndoRedoAction(true);
       const nextState = redoStack[redoStack.length - 1];
       console.log("Redoing to state:", nextState);
+
       setRedoStack((prevRedoStack) => prevRedoStack.slice(0, -1));
       setHistory((prevHistory) => [...prevHistory, nextState]);
+
       canvas.loadFromJSON(nextState, () => {
         console.log("Canvas state after redo:", canvas.toJSON());
         canvas.renderAll();
@@ -117,19 +122,30 @@ const ImageCanvas = () => {
 
   useEffect(() => {
     const handleKeyDown = (e) => {
-      if (e.metaKey && e.key === 'z') {
+      if (e.key === 'Shift') {
+        setIsShiftPressed(true);
+      }
+      if (e.metaKey && e.key === 'z' && !isShiftPressed) {
         handleUndo();
       }
-      if (e.metaKey && e.shiftKey && e.key === 'z') {
+      if (e.metaKey && e.key === 'z' && isShiftPressed) {
         handleRedo();
       }
     };
 
+    const handleKeyUp = (e) => {
+      if (e.key === 'Shift') {
+        setIsShiftPressed(false);
+      }
+    };
+
     document.addEventListener('keydown', handleKeyDown);
+    document.addEventListener('keyup', handleKeyUp);
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
+      document.removeEventListener('keyup', handleKeyUp);
     };
-  }, [handleUndo, handleRedo]);
+  }, [handleUndo, handleRedo, isShiftPressed]);
 
   return (
     <div>
