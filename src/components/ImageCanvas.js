@@ -1,56 +1,72 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { fabric } from 'fabric';
+import { FabricJSCanvas, useFabricJSEditor } from 'fabricjs-react';
 
 const MAX_HISTORY_LENGTH = 50;
 
 const ImageCanvas = () => {
-  const [canvas, setCanvas] = useState(null);
+  const { editor, onReady } = useFabricJSEditor();
   const [history, setHistory] = useState([]);
   const [redoStack, setRedoStack] = useState([]);
   const [isUndoRedoAction, setIsUndoRedoAction] = useState(false);
-  const [isShiftPressed, setIsShiftPressed] = useState(false);
-  const canvasRef = useRef(null);
 
-  useEffect(() => {
-    const fabricCanvas = new fabric.Canvas(canvasRef.current, {
-      width: 800,
-      height: 600,
-      backgroundColor: 'white',
-    });
-
-    setCanvas(fabricCanvas);
-
-    return () => {
-      fabricCanvas.dispose();
-    };
-  }, []);
-
-  const saveHistory = useCallback(() => {
-    if (canvas && !isUndoRedoAction) {
-      const json = canvas.toJSON();
-      console.log("Saving history:", json);
-
-      setHistory((prevHistory) => {
-        const newHistory = prevHistory.length >= MAX_HISTORY_LENGTH 
-          ? prevHistory.slice(1).concat(json)
-          : prevHistory.concat(json);
-        return newHistory;
-      });
-
-      setRedoStack([]); 
+  const addBackground = useCallback(() => {
+    if (!editor || !fabric) {
+      console.log('Editor or fabric not loaded'); // then return
+      return; 
     }
-  }, [canvas, isUndoRedoAction]);
+
+    console.log('Adding background');
+    fabric.Image.fromURL('/white_t.jpg', (image) => {
+      if (!image) {
+        console.log('Image not loaded');
+        return;
+      }
+      console.log('Image loaded successfully');
+      // Optionally, scale the background image to fit the canvas
+      image.scaleToWidth(editor.canvas.getWidth());
+      image.scaleToHeight(editor.canvas.getHeight());
+
+      editor.canvas.setBackgroundImage(image, editor.canvas.renderAll.bind(editor.canvas));
+    // Optionally, you can check the background image setting
+      const bgImage = editor.canvas.backgroundImage;
+      if (bgImage) {
+        console.log('Background image is correctly set');
+      } else {
+        console.log('Background image is not set');
+      }
+
+      editor.canvas.renderAll();
+    });
+  }, [editor]);
 
   useEffect(() => {
-    if (canvas) {
+    if (editor) {
+      // editor.canvas.setHeight(500);
+      // editor.canvas.setWidth(500);
+      addBackground();
+
+      const saveHistory = () => {
+        if (!isUndoRedoAction) {
+          const json = editor.canvas.toJSON();
+          setHistory((prevHistory) => {
+            const newHistory = prevHistory.length >= MAX_HISTORY_LENGTH 
+              ? prevHistory.slice(1).concat(json)
+              : prevHistory.concat(json);
+            return newHistory;
+          });
+          setRedoStack([]);
+        }
+      };
+
       const events = ['object:added', 'object:modified', 'object:removed'];
-      events.forEach(event => canvas.on(event, saveHistory));
-      
+      events.forEach((event) => editor.canvas.on(event, saveHistory));
+
       return () => {
-        events.forEach(event => canvas.off(event, saveHistory));
+        events.forEach((event) => editor.canvas.off(event, saveHistory));
       };
     }
-  }, [canvas, saveHistory]);
+  }, [editor, addBackground, isUndoRedoAction]);
 
   const handleImageUpload = (e) => {
     const file = e.target.files[0];
@@ -58,27 +74,18 @@ const ImageCanvas = () => {
       const reader = new FileReader();
       reader.onload = (event) => {
         fabric.Image.fromURL(event.target.result, (img) => {
-          const canvasWidth = canvas.getWidth();
-          const canvasHeight = canvas.getHeight();
-
-          // 缩放图像到画布宽度的1/5
+          const canvasWidth = editor.canvas.getWidth();
+          const canvasHeight = editor.canvas.getHeight();
           const scaleFactor = (canvasWidth / 5) / img.width;
           img.scale(scaleFactor);
-
-          // 设置图像位置为画布中心
           img.set({
             left: canvasWidth / 2 - (img.getScaledWidth() / 2),
             top: canvasHeight / 2 - (img.getScaledHeight() / 2),
-            angle: 0,
-            padding: 10,
-            cornersize: 10,
-            hasRotatingPoint: true,
           });
 
-          canvas.add(img);
-          canvas.renderAll();
-          canvas.setActiveObject(img);
-          saveHistory();
+          editor.canvas.add(img);
+          editor.canvas.renderAll();
+          editor.canvas.setActiveObject(img);
         });
       };
       reader.readAsDataURL(file);
@@ -88,71 +95,52 @@ const ImageCanvas = () => {
   const handleUndo = useCallback(() => {
     if (history.length > 1) {
       setIsUndoRedoAction(true);
-      const currentState = history[history.length - 1];
       const prevState = history[history.length - 2];
-      console.log("Undoing to state:", prevState);
-
-      setRedoStack((prevRedoStack) => [...prevRedoStack, currentState]);
+      setRedoStack((prevRedoStack) => [...prevRedoStack, history[history.length - 1]]);
       setHistory((prevHistory) => prevHistory.slice(0, -1));
 
-      canvas.loadFromJSON(prevState, () => {
-        console.log("Canvas state after undo:", canvas.toJSON());
-        canvas.renderAll();
+      editor.canvas.loadFromJSON(prevState, () => {
+        editor.canvas.renderAll();
         setIsUndoRedoAction(false);
       });
     }
-  }, [history, canvas]);
+  }, [history, editor]);
 
   const handleRedo = useCallback(() => {
     if (redoStack.length > 0) {
       setIsUndoRedoAction(true);
       const nextState = redoStack[redoStack.length - 1];
-      console.log("Redoing to state:", nextState);
-
       setRedoStack((prevRedoStack) => prevRedoStack.slice(0, -1));
       setHistory((prevHistory) => [...prevHistory, nextState]);
 
-      canvas.loadFromJSON(nextState, () => {
-        console.log("Canvas state after redo:", canvas.toJSON());
-        canvas.renderAll();
+      editor.canvas.loadFromJSON(nextState, () => {
+        editor.canvas.renderAll();
         setIsUndoRedoAction(false);
       });
     }
-  }, [redoStack, canvas]);
+  }, [redoStack, editor]);
 
   useEffect(() => {
     const handleKeyDown = (e) => {
-      if (e.key === 'Shift') {
-        setIsShiftPressed(true);
-      }
-      if (e.metaKey && e.key === 'z' && !isShiftPressed) {
+      if (e.metaKey && e.key === 'z' && !e.shiftKey) {
         handleUndo();
-      }
-      if (e.metaKey && e.key === 'z' && isShiftPressed) {
+      } else if (e.metaKey && e.key === 'z' && e.shiftKey) {
         handleRedo();
       }
     };
 
-    const handleKeyUp = (e) => {
-      if (e.key === 'Shift') {
-        setIsShiftPressed(false);
-      }
-    };
-
     document.addEventListener('keydown', handleKeyDown);
-    document.addEventListener('keyup', handleKeyUp);
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
-      document.removeEventListener('keyup', handleKeyUp);
     };
-  }, [handleUndo, handleRedo, isShiftPressed]);
+  }, [handleUndo, handleRedo]);
 
   return (
     <div>
       <input type="file" accept="image/*" onChange={handleImageUpload} />
       <button onClick={handleUndo}>Undo</button>
       <button onClick={handleRedo}>Redo</button>
-      <canvas ref={canvasRef} />
+      <FabricJSCanvas className="sample-canvas" onReady={onReady} />
     </div>
   );
 };
